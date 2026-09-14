@@ -105,7 +105,7 @@ An invoice is a JSON object carrying the invoice-level fields at the **top level
 | `CreditNote` | Credit note | **No** - a negative document; its open amount offsets what the debtor owes |
 | `DebitNote` | Debit note | Yes |
 
-"Yes" means one thing for every kind: the record is chased **when its own `amountOutstanding` is positive** (§3.1.2). Proformas are excluded regardless of amounts, and a credit note never has a positive open amount.
+"Yes" means one thing for every kind: the record is chased **when its own `amountOutstanding` is positive** (§3.1.2). Proformas are excluded regardless of amounts, and a credit note never has a positive open amount (a refund larger than the credit note itself would be a bookkeeping error, not a case this contract covers).
 
 > If your source system uses other document kinds, list them during onboarding so we can map them (§9).
 
@@ -135,14 +135,14 @@ This is accepted, but it has a visible consequence: the debtor holds one documen
 | `amountNet` | decimal | **Yes** | Net amount. |
 | `amountVat` | decimal | **Yes** | VAT amount. |
 | `amountGross` | decimal | **Yes** | Gross total of this document. Signed on adjusting documents (§3.1.2). |
-| `amountPaid` | decimal | **Yes** | Amount settled against this document by payments (`0` if none). Enables partial-payment handling. **Never clamped** to `amountGross` - see overpayments below. |
-| `amountOutstanding` | decimal | **Yes** | **The open amount of this document in your ERP, right now.** This is the authoritative value and what collection chases. It is normally `amountGross - amountPaid`, but not always: adjusting documents netted against this one change it without touching `amountPaid` (§3.1.2), and cancelled documents report `0` (§3.3). |
+| `amountPaid` | decimal | **Yes** | Amount settled against this document by payments (`0` if none). Enables partial-payment handling. **Never clamped** - see overpayments below. |
+| `amountOutstanding` | decimal | **Yes** | **The open amount of this document in your ERP, right now.** This is the authoritative value and what collection chases. It is normally `amountGross - amountPaid`, but not always: netting - in either direction - changes it without touching `amountPaid` (§3.1.2), and cancelled documents report `0` (§3.3). |
 
 **Signs.** `amountNet` / `amountVat` / `amountGross` are non-negative on ordinary documents and signed on adjusting documents (§3.1.2). `amountOutstanding` may be **negative on any document** - an overpaid invoice, or a credit note whose refund is still owed. Sunbay chases **only positive** `amountOutstanding`.
 
-`amountPaid` carries the **same sign as the document it belongs to**: a refund paid out against a credit note is a negative `amountPaid`. That keeps `|amountPaid|` and `|amountGross|` comparable in the status rules (§3.3).
+`amountPaid` carries the **same sign as the document it belongs to**: a refund paid out against a credit note is a negative `amountPaid`. That way the status rules (§3.3) read the same on both signs.
 
-**Overpayments.** When more is received than was invoiced, do **not** clamp. `amountPaid` carries the full amount actually received, and `amountOutstanding` goes **negative** by the surplus; `status` is `Paid`. Capping `amountPaid` at `amountGross` silently deletes the surplus from the feed and is not acceptable - the overpayment is real information about the debtor's account.
+**Overpayments.** When more is received than is owed on the document, do **not** clamp. `amountPaid` carries the full amount actually received, and `amountOutstanding` goes **negative** by the surplus; `status` is `Paid`. This includes an invoice paid at its face value after a credit was cleared against it (§3.1.2) - the debtor owed less than the face value, so the difference is a surplus like any other. Capping `amountPaid` silently deletes the surplus from the feed and is not acceptable - the overpayment is real information about the debtor's account.
 
 ### 3.3 Status & lifecycle
 
@@ -153,14 +153,16 @@ This is accepted, but it has a visible consequence: the debtor holds one documen
 | `isBlockedForCollection` | boolean | **Rec.** | `true` if Sunbay must **not** chase this invoice (dispute, legal hold, internal block). If the source system has no equivalent concept, **omit the field** instead of sending `false` on every record - an omitted field means *no block information is available*, whereas `false` is a positive statement that the invoice may be chased. When the field is absent, Sunbay treats the invoice as chaseable. |
 | `lastModifiedAt` | timestamp | **Yes** | When the record **as this API exposes it** last changed (ISO-8601 UTC) - not only edits in the source system, but any change in the exposed fields, including derived ones. Drives incremental fetching (§4.2): **any** change - status, amounts, payments, cancellation, a credit cleared against the record (§3.1.2), correction linkage - must update this timestamp, whether the source record itself changed or the integration layer derived the new value. |
 
-**Status must follow from the amounts.** The two must never contradict each other. The rules below hold for every document kind; on documents with negative amounts (credit notes) compare absolute values.
+**Status must follow from the amounts.** The two must never contradict each other. The rules below hold for every document kind - the sign of `amountGross` says which direction the document runs in, and `amountOutstanding` is read against it.
 
 | Condition | `status` |
 |---|---|
-| Nothing settled yet: `amountPaid = 0` and `amountOutstanding ≠ 0` | `Open` |
-| Partly settled: `amountPaid ≠ 0` and `amountOutstanding ≠ 0`, not overpaid | `PartiallyPaid` |
-| Nothing open: `amountOutstanding = 0`, or overpaid (`\|amountPaid\| > \|amountGross\|`) | `Paid` (with `paidDate` set) |
+| Nothing settled yet: `amountPaid = 0`, and `amountOutstanding` has the same sign as `amountGross` | `Open` |
+| Partly settled: `amountPaid ≠ 0`, and `amountOutstanding` has the same sign as `amountGross` | `PartiallyPaid` |
+| Nothing open: `amountOutstanding = 0`, or its sign is opposite to `amountGross` (overpaid) | `Paid` (with `paidDate` set) |
 | Document cancelled or voided in the source system | `Cancelled`, whatever the amounts |
+
+A document with `amountGross = 0` - a corrective invoice that changes only descriptive data, say - has nothing to settle: it reports `amountOutstanding = 0` and `status = Paid`, with `paidDate = issueDate`.
 
 If a record nevertheless arrives self-contradictory - `PartiallyPaid` with `amountOutstanding = 0`, say - **the amounts decide** what Sunbay does: only a positive `amountOutstanding` is chased. Two overrides always win regardless of the amounts: `Cancelled` and `isBlockedForCollection = true` both stop collection.
 
@@ -515,7 +517,7 @@ Additionally:
 3. **Corrections - sign** - can the signed difference be derived reliably? Does the sign in your system follow the accounting side of the entry, and can the same document kind carry both directions? (§3.1.2)
 4. **Split documents** - is one accounting document ever delivered as several receivables sharing an `invoiceNumber` (e.g. keyed per line item)? (§3.1.3)
 5. **Partial payments** - can `amountPaid` / `amountOutstanding` be provided, or only a binary paid flag?
-6. **Overpayments** - can a payment exceed the invoiced amount, and will the surplus be reported rather than clamped? (§3.2)
+6. **Overpayments** - can a payment exceed what is owed on a document, and will the surplus be reported rather than clamped? (§3.2)
 7. **Cancelled documents** - can the source system produce the agreed shape (nominal `amountGross`, `amountOutstanding = 0`, truthful `amountPaid`)? (§3.3)
 8. **Blocking** - does the source system mark invoices that must not be chased (dispute, legal hold)? If not, how should such cases reach Sunbay - or is the field simply omitted? (§3.3)
 9. **Document types** - which document kinds exist and which are collectible; mapping of any kinds not listed in §3.1.1. Proformas are never chased (§3.1.1) - should they be sent at all, for analytics?
