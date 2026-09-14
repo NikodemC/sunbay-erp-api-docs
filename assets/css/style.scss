@@ -1,0 +1,63 @@
+---
+---
+
+@import "{{ site.theme }}";
+
+// Sunbay brand overrides
+$sunbay-violet: #3a2f98;
+$sunbay-violet-light: #6153d0;
+$sunbay-violet-dark: #100923;
+$sunbay-gold: #f3b700;
+
+.page-header {
+  background-color: $sunbay-violet;
+  background-image: linear-gradient(120deg, $sunbay-violet-light 0%, $sunbay-violet 60%, $sunbay-violet-dark 100%);
+}
+
+.sunbay-logo {
+  display: block;
+  height: 44px;
+  width: auto;
+  margin: 0 auto 1.25rem;
+}
+
+.project-name {
+  margin-bottom: 0.3rem;
+}
+
+a {
+  color: $sunbay-violet;
+
+  &:hover {
+    color: $sunbay-violet-light;
+  }
+}
+
+.main-content {
+  h1,
+  h2 {
+    color: $sunbay-violet-dark;
+  }
+
+  h2 {
+    border-bottom: 2px solid rgba($sunbay-violet, 0.15);
+    padding-bottom: 0.3em;
+  }
+
+  table th {
+    background-color: rgba($sunbay-violet, 0.06);
+  }
+
+  blockquote {
+    color: #4a4a4a;
+    border-left: 0.3rem solid $sunbay-gold;
+  }
+
+  code {
+    color: $sunbay-violet-dark;
+  }
+
+  pre code {
+    color: inherit;
+  }
+}
